@@ -26,9 +26,24 @@ st.markdown("""
 
 st.title("⚡ 산업단지 전력사용 분석기")
 
-# 2. 사이드바 - CSV 파일 업로더 (11일 차 핵심 기능)
+# 2. 사이드바 - CSV 파일 업로더 및 양식 다운로드 (12일 차 기능 추가)
 st.sidebar.header("📁 0. 데이터 선택")
 uploaded_file = st.sidebar.file_uploader("사용자 전력 CSV 파일 업로드", type=["csv"])
+
+# 샘플 데이터 읽기 함수
+@st.cache_data
+def load_default_data():
+    return pd.read_csv("data/sample_load.csv")
+
+# 샘플 CSV 다운로드 버튼 제공
+sample_df = load_default_data()
+csv_sample_bytes = sample_df.to_csv(index=False).encode('utf-8')
+st.sidebar.download_button(
+    label="📥 기본 CSV 양식 다운로드",
+    data=csv_sample_bytes,
+    file_name="sample_energy_template.csv",
+    mime="text/csv"
+)
 
 st.sidebar.header("1. 분석 옵션")
 start_hour, end_hour = st.sidebar.slider(
@@ -47,15 +62,19 @@ base_rate = st.sidebar.number_input(
     min_value=0.0, value=8320.0, step=100.0
 )
 
-# 3. 데이터 로드 (업로드 파일 우선, 없으면 기본 샘플 파일 사용)
-@st.cache_data
-def load_default_data():
-    return pd.read_csv("data/sample_load.csv")
-
+# 3. 파일 로드 및 안전 검증 (12일 차 예외 처리 고도화)
 try:
     if uploaded_file is not None:
-        df_raw = pd.read_csv(uploaded_file)
-        st.sidebar.success("✅ 사용자 파일 불러오기 성공!")
+        user_df = pd.read_csv(uploaded_file)
+        
+        # 필수 컬럼 존재 여부 체크
+        required_cols = {'timestamp', 'load_kw'}
+        if not required_cols.issubset(set(user_df.columns)):
+            st.sidebar.warning("⚠️ 업로드 파일 양식이 다릅니다. (필수 컬럼: timestamp, load_kw) 기본 샘플 데이터로 대체합니다.")
+            df_raw = load_default_data()
+        else:
+            df_raw = user_df
+            st.sidebar.success("✅ 사용자 파일 불러오기 성공!")
     else:
         df_raw = load_default_data()
         st.sidebar.info("ℹ️ 기본 샘플 데이터를 사용 중입니다.")
@@ -63,27 +82,27 @@ try:
     df_clean = clean_data(df_raw)
     df_filtered = filter_by_time_range(df_clean, start_hour, end_hour)
 
-    # 지표 계산
+    # 주요 지표 계산
     peak_kw = calculate_peak_load(df_filtered)
     peak_info = find_peak_info(df_filtered)
     total_kwh = calculate_total_consumption(df_filtered)
     kepco_cost = calculate_kepco_cost(df_filtered, base_rate=base_rate)
     is_exceeded = check_peak_threshold(peak_kw, threshold_kw)
 
-    # 경고 메시지
+    # 경고 알림 메세지
     if is_exceeded:
         st.error(f"⚠️ 경고: 선택 구간 피크전력({peak_kw:.1f} kW)이 목표 임계값({threshold_kw:.1f} kW)을 초과했습니다!")
     else:
         st.success(f"✅ 안정: 선택 구간 피크전력({peak_kw:.1f} kW)이 목표 범위 내에 있습니다.")
 
-    # 상단 메트릭 카드
+    # 상단 요약 지표 카드
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("최대수요전력", f"{peak_kw:.1f} kW")
     col2.metric("피크 발생 시각", peak_info['peak_time'] if peak_info['peak_time'] else "-")
     col3.metric("총 전력 사용량", f"{total_kwh:,.1f} kWh")
     col4.metric("추정 총 전력요금", f"{int(kepco_cost['total_cost']):,} 원")
 
-    # 탭 구성
+    # 탭 메뉴 구성을 통한 차트/분석 화면 출력
     tab1, tab2, tab3, tab4 = st.tabs(["📈 전력 사용량 추이", "💰 요금 분석 명세", "💾 데이터 및 보고서 다운로드", "❓ 사용 도움말"])
 
     with tab1:
@@ -139,9 +158,10 @@ try:
     with tab4:
         st.markdown("""
         ### 사용 도움말
-        1. 왼쪽 사이드바에서 **내 CSV 파일**을 드래그해서 업로드할 수 있습니다.
-        2. 파일을 올리지 않으면 기본 **샘플 전력 데이터**가 자동으로 분석됩니다.
+        1. 왼쪽 사이드바에서 **`📥 기본 CSV 양식 다운로드`** 버튼을 누르면 업로드 가능한 샘플 서식을 얻을 수 있습니다.
+        2. 파일은 반드시 **`timestamp`** 와 **`load_kw`** 열(Column)을 포함해야 정상 작동합니다.
+        3. 잘못된 파일 형식 업로드 시 자동으로 안전 장치가 작동하여 샘플 데이터로 복구됩니다.
         """)
 
 except Exception as e:
-    st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
+    st.error(f"데이터 정제 중 예상치 못한 오류가 발생했습니다: {e}")
