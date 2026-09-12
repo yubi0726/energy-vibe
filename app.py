@@ -13,7 +13,7 @@ from src.calculations import (
     generate_html_report
 )
 
-# 1. 페이지 설정 및 폰트 깨짐 방지 CSS
+# 1. 페이지 설정 및 CSS
 st.set_page_config(page_title="산업단지 전력사용 분석기", layout="wide")
 
 st.markdown("""
@@ -26,7 +26,10 @@ st.markdown("""
 
 st.title("⚡ 산업단지 전력사용 분석기")
 
-# 2. 사이드바 - 옵션 입력
+# 2. 사이드바 - CSV 파일 업로더 (11일 차 핵심 기능)
+st.sidebar.header("📁 0. 데이터 선택")
+uploaded_file = st.sidebar.file_uploader("사용자 전력 CSV 파일 업로드", type=["csv"])
+
 st.sidebar.header("1. 분석 옵션")
 start_hour, end_hour = st.sidebar.slider(
     "분석 시간대 선택 (시)",
@@ -44,13 +47,19 @@ base_rate = st.sidebar.number_input(
     min_value=0.0, value=8320.0, step=100.0
 )
 
-# 3. 데이터 로드 (기본 샘플 데이터)
+# 3. 데이터 로드 (업로드 파일 우선, 없으면 기본 샘플 파일 사용)
 @st.cache_data
-def load_data():
+def load_default_data():
     return pd.read_csv("data/sample_load.csv")
 
 try:
-    df_raw = load_data()
+    if uploaded_file is not None:
+        df_raw = pd.read_csv(uploaded_file)
+        st.sidebar.success("✅ 사용자 파일 불러오기 성공!")
+    else:
+        df_raw = load_default_data()
+        st.sidebar.info("ℹ️ 기본 샘플 데이터를 사용 중입니다.")
+
     df_clean = clean_data(df_raw)
     df_filtered = filter_by_time_range(df_clean, start_hour, end_hour)
 
@@ -67,7 +76,7 @@ try:
     else:
         st.success(f"✅ 안정: 선택 구간 피크전력({peak_kw:.1f} kW)이 목표 범위 내에 있습니다.")
 
-    # 상단 메트릭 카트
+    # 상단 메트릭 카드
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("최대수요전력", f"{peak_kw:.1f} kW")
     col2.metric("피크 발생 시각", peak_info['peak_time'] if peak_info['peak_time'] else "-")
@@ -130,8 +139,8 @@ try:
     with tab4:
         st.markdown("""
         ### 사용 도움말
-        1. 왼쪽 사이드바에서 **분석 시간대**와 **목표 피크**를 조절할 수 있습니다.
-        2. KEPCO 산업용 요금 체계(경부하/중간부하/최대부하)에 맞춰 정밀 계산됩니다.
+        1. 왼쪽 사이드바에서 **내 CSV 파일**을 드래그해서 업로드할 수 있습니다.
+        2. 파일을 올리지 않으면 기본 **샘플 전력 데이터**가 자동으로 분석됩니다.
         """)
 
 except Exception as e:
