@@ -141,3 +141,44 @@ def generate_html_report(peak: float, peak_time: str, total: float, cost_info: D
     </body>
     </html>
     """
+def calculate_kepco_cost(df, base_rate=8320, summer_rates=None):
+    """
+    KEPCO 산업용(을) 기준 시간대별 차등 요금 계산 로직
+    """
+    if summer_rates is None:
+        # 기본 설정 단가 (원/kWh) - 예시 기준
+        summer_rates = {
+            'off_peak': 65.2,   # 경부하
+            'mid_peak': 109.0,  # 중간부하
+            'on_peak': 191.1    # 최대부하
+        }
+
+    # 시간대 분류 함수
+    def get_time_category(hour):
+        if 22 <= hour or hour < 8:
+            return 'off_peak'
+        elif hour in [11, 13, 14, 15, 16]:
+            return 'on_peak'
+        else:
+            return 'mid_peak'
+
+    df_calc = df.copy()
+    df_calc['hour'] = df_calc['datetime'].dt.hour
+    df_calc['category'] = df_calc['hour'].apply(get_time_category)
+    
+    # 시간대별 사용량 합계
+    category_usage = df_calc.groupby('category')['power_usage'].sum().to_dict()
+    
+    # 요금 계산
+    off_cost = category_usage.get('off_peak', 0) * summer_rates['off_peak']
+    mid_cost = category_usage.get('mid_peak', 0) * summer_rates['mid_peak']
+    on_cost = category_usage.get('on_peak', 0) * summer_rates['on_peak']
+    
+    total_usage_cost = off_cost + mid_cost + on_cost
+    
+    return {
+        'base_cost': base_rate,
+        'usage_cost': total_usage_cost,
+        'total_cost': base_rate + total_usage_cost,
+        'category_usage': category_usage
+    }
