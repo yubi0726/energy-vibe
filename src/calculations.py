@@ -2,6 +2,7 @@ import pandas as pd
 from typing import Dict, Any
 import plotly.graph_objects as go
 
+
 def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     """데이터 전처리: timestamp 파싱, 결측치 및 음수 전력 데이터 처리"""
     df = df.copy()
@@ -14,6 +15,7 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
         
     return df
 
+
 def filter_by_time_range(df: pd.DataFrame, start_hour: int, end_hour: int) -> pd.DataFrame:
     """특정 시간대 데이터 필터링"""
     if 'timestamp' not in df.columns or df.empty:
@@ -22,17 +24,20 @@ def filter_by_time_range(df: pd.DataFrame, start_hour: int, end_hour: int) -> pd
     hours = df['timestamp'].dt.hour
     return df[(hours >= start_hour) & (hours <= end_hour)]
 
+
 def calculate_peak_load(df: pd.DataFrame) -> float:
     """최대수요전력(kW) 계산"""
     if df.empty or 'load_kw' not in df.columns:
         return 0.0
     return float(df['load_kw'].max())
 
+
 def calculate_total_consumption(df: pd.DataFrame) -> float:
     """총 사용량(kWh) 계산"""
     if df.empty or 'load_kw' not in df.columns:
         return 0.0
     return float(df['load_kw'].sum())
+
 
 def find_peak_info(df: pd.DataFrame) -> Dict[str, Any]:
     """최대수요전력 발생 시각과 값 추출"""
@@ -46,12 +51,14 @@ def find_peak_info(df: pd.DataFrame) -> Dict[str, Any]:
         'peak_time': str(peak_row['timestamp'])
     }
 
+
 def check_peak_threshold(peak_kw: float, threshold_kw: float) -> bool:
     """설정 목표 피크 초과 여부 확인"""
     return peak_kw > threshold_kw
 
+
 def calculate_estimated_cost(df: pd.DataFrame, base_rate_per_kw: float = 8320, kwh_rate: float = 120.5) -> Dict[str, float]:
-    """추정 전력 요금 계산"""
+    """단순 추정 전력 요금 계산"""
     if df.empty or 'load_kw' not in df.columns:
         return {'base_cost': 0.0, 'usage_cost': 0.0, 'total_cost': 0.0}
 
@@ -67,6 +74,57 @@ def calculate_estimated_cost(df: pd.DataFrame, base_rate_per_kw: float = 8320, k
         'usage_cost': usage_cost,
         'total_cost': total_cost
     }
+
+
+def calculate_kepco_cost(df: pd.DataFrame, base_rate: float = 8320, rates: Dict[str, float] = None) -> Dict[str, Any]:
+    """
+    한전 산업용 3단계 시간대별(경부하, 중간부하, 최대부하) 요금 계산
+    """
+    if df.empty or 'load_kw' not in df.columns:
+        return {
+            'base_cost': 0.0,
+            'usage_cost': 0.0,
+            'total_cost': 0.0,
+            'usage_by_cat': {'off_peak': 0.0, 'mid_peak': 0.0, 'on_peak': 0.0}
+        }
+
+    if rates is None:
+        rates = {'off_peak': 65.2, 'mid_peak': 109.0, 'on_peak': 191.1}
+
+    df_calc = df.copy()
+    
+    # timestamp컬럼 이름을 기준으로 시간 추출 (안전한 컬럼 대응)
+    time_col = 'timestamp' if 'timestamp' in df_calc.columns else 'datetime'
+    df_calc['hour'] = pd.to_datetime(df_calc[time_col]).dt.hour
+    
+    # 시간대 분류 (경부하: 22-08시, 최대부하: 11시, 13-16시, 중간부하: 기타)
+    def get_category(h):
+        if 22 <= h or h < 8:
+            return 'off_peak'
+        elif h in [11, 13, 14, 15, 16]:
+            return 'on_peak'
+        else:
+            return 'mid_peak'
+
+    df_calc['category'] = df_calc['hour'].apply(get_category)
+    usage_by_cat = df_calc.groupby('category')['load_kw'].sum().to_dict()
+
+    peak_kw = calculate_peak_load(df)
+    base_cost = peak_kw * base_rate
+
+    off_cost = usage_by_cat.get('off_peak', 0.0) * rates['off_peak']
+    mid_cost = usage_by_cat.get('mid_peak', 0.0) * rates['mid_peak']
+    on_cost = usage_by_cat.get('on_peak', 0.0) * rates['on_peak']
+
+    usage_cost = off_cost + mid_cost + on_cost
+
+    return {
+        'base_cost': base_cost,
+        'usage_cost': usage_cost,
+        'total_cost': base_cost + usage_cost,
+        'usage_by_cat': usage_by_cat
+    }
+
 
 def generate_interactive_chart(df: pd.DataFrame, threshold_kw: float) -> go.Figure:
     """Plotly 기반 인터랙티브 전력 사용량 그래프 생성"""
@@ -101,11 +159,17 @@ def generate_interactive_chart(df: pd.DataFrame, threshold_kw: float) -> go.Figu
     
     return fig
 
-def generate_html_report(peak: float, peak_time: str, total: float, cost_info: Dict[str, float], threshold: float) -> str:
-    """HTML 보고서 생성"""
+
+def generate_html_report(peak: float, peak_time: str, total: float, cost_info: Dict[str, Any], threshold: float) -> str:
+    """3단계 요금 내역을 포함한 HTML 보고서 생성"""
     is_exceeded = peak > threshold
     status_text = "경고 (목표 초과)" if is_exceeded else "안정 (목표 준수)"
     status_color = "#d9534f" if is_exceeded else "#5cb85c"
+
+    cat_usage = cost_info.get('usage_by_cat', {})
+    off_u = cat_usage.get('off_peak', 0.0)
+    mid_u = cat_usage.get('mid_peak', 0.0)
+    on_u = cat_usage.get('on_peak', 0.0)
 
     return f"""
     <!DOCTYPE html>
@@ -125,6 +189,7 @@ def generate_html_report(peak: float, peak_time: str, total: float, cost_info: D
     <body>
         <h1>⚡ 산업단지 전력사용 분석 보고서</h1>
         <p><strong>진단 결과:</strong> <span class="status">{status_text}</span></p>
+        
         <h2>1. 주요 지표</h2>
         <table>
             <tr><th>최대수요전력 (Peak)</th><td>{peak:.1f} kW</td></tr>
@@ -132,87 +197,20 @@ def generate_html_report(peak: float, peak_time: str, total: float, cost_info: D
             <tr><th>목표 피크 임계값</th><td>{threshold:.1f} kW</td></tr>
             <tr><th>총 사용량</th><td>{total:,.1f} kWh</td></tr>
         </table>
-        <h2>2. 요금 산정 내역</h2>
+        
+        <h2>2. 시간대별 사용량 구분</h2>
         <table>
-            <tr><th>기본 요금</th><td>{int(cost_info['base_cost']):,} 원</td></tr>
-            <tr><th>사용량 요금</th><td>{int(cost_info['usage_cost']):,} 원</td></tr>
-            <tr><th><strong>합계 추정 요금</strong></th><td><strong>{int(cost_info['total_cost']):,} 원</strong></td></tr>
+            <tr><th>경부하 사용량 (22시~08시)</th><td>{off_u:,.1f} kWh</td></tr>
+            <tr><th>중간부하 사용량</th><td>{mid_u:,.1f} kWh</td></tr>
+            <tr><th>최대부하 사용량 (피크시간)</th><td>{on_u:,.1f} kWh</td></tr>
+        </table>
+
+        <h2>3. 요금 산정 내역</h2>
+        <table>
+            <tr><th>기본 요금</th><td>{int(cost_info.get('base_cost', 0)):,} 원</td></tr>
+            <tr><th>전력량 요금 (합계)</th><td>{int(cost_info.get('usage_cost', 0)):,} 원</td></tr>
+            <tr><th><strong>합계 추정 요금</strong></th><td><strong>{int(cost_info.get('total_cost', 0)):,} 원</strong></td></tr>
         </table>
     </body>
     </html>
     """
-def calculate_kepco_cost(df, base_rate=8320, summer_rates=None):
-    """
-    KEPCO 산업용(을) 기준 시간대별 차등 요금 계산 로직
-    """
-    if summer_rates is None:
-        # 기본 설정 단가 (원/kWh) - 예시 기준
-        summer_rates = {
-            'off_peak': 65.2,   # 경부하
-            'mid_peak': 109.0,  # 중간부하
-            'on_peak': 191.1    # 최대부하
-        }
-
-    # 시간대 분류 함수
-    def get_time_category(hour):
-        if 22 <= hour or hour < 8:
-            return 'off_peak'
-        elif hour in [11, 13, 14, 15, 16]:
-            return 'on_peak'
-        else:
-            return 'mid_peak'
-
-    df_calc = df.copy()
-    df_calc['hour'] = df_calc['datetime'].dt.hour
-    df_calc['category'] = df_calc['hour'].apply(get_time_category)
-    
-    # 시간대별 사용량 합계
-    category_usage = df_calc.groupby('category')['power_usage'].sum().to_dict()
-    
-    # 요금 계산
-    off_cost = category_usage.get('off_peak', 0) * summer_rates['off_peak']
-    mid_cost = category_usage.get('mid_peak', 0) * summer_rates['mid_peak']
-    on_cost = category_usage.get('on_peak', 0) * summer_rates['on_peak']
-    
-    total_usage_cost = off_cost + mid_cost + on_cost
-    
-    return {
-        'base_cost': base_rate,
-        'usage_cost': total_usage_cost,
-        'total_cost': base_rate + total_usage_cost,
-        'category_usage': category_usage
-    }
-def calculate_kepco_cost(df, base_rate=8320, rates=None):
-    """
-    한전 산업용 3단계 시간대별(경부하, 중간부하, 최대부하) 요금 계산
-    """
-    if rates is None:
-        rates = {'off_peak': 65.2, 'mid_peak': 109.0, 'on_peak': 191.1}
-
-    df_calc = df.copy()
-    df_calc['hour'] = df_calc['datetime'].dt.hour
-    
-    # 시간대 분류 (경부하: 22-08시, 최대부하: 11시,13-16시, 중간부하: 기타)
-    def get_category(h):
-        if 22 <= h or h < 8:
-            return 'off_peak'
-        elif h in [11, 13, 14, 15, 16]:
-            return 'on_peak'
-        else:
-            return 'mid_peak'
-
-    df_calc['category'] = df_calc['hour'].apply(get_category)
-    usage_by_cat = df_calc.groupby('category')['power_usage'].sum().to_dict()
-
-    off_cost = usage_by_cat.get('off_peak', 0) * rates['off_peak']
-    mid_cost = usage_by_cat.get('mid_peak', 0) * rates['mid_peak']
-    on_cost = usage_by_cat.get('on_peak', 0) * rates['on_peak']
-
-    usage_cost = off_cost + mid_cost + on_cost
-
-    return {
-        'base_cost': base_rate,
-        'usage_cost': usage_cost,
-        'total_cost': base_rate + usage_cost,
-        'usage_by_cat': usage_by_cat
-    }

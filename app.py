@@ -81,11 +81,44 @@ if file is not None:
             st.plotly_chart(fig, use_container_width=True)
 
         with tab2:
-            st.subheader('전력 요금 추정 산출 내역')
-            st.write(f"- **기본 요금 산정액:** {int(cost_info['base_cost']):,} 원 (피크 {peak:.1f} kW × {base_rate:,} 원)")
-            st.write(f"- **전력량 사용 요금액:** {int(cost_info['usage_cost']):,} 원 (사용량 {total:,.1f} kWh × {kwh_rate} 원)")
-            st.markdown(f"### **최종 추정 요금: {int(cost_info['total_cost']):,} 원**")
-
+    st.subheader("💰 KEPCO 산업용 계절·시간대별 요금 분석")
+    
+    # 1. KEPCO 3단계 요금 계산 함수 호출
+    kepco_result = calculate_kepco_cost(df_filtered, base_rate=base_rate, rates={'off_peak': 65.2, 'mid_peak': 109.0, 'on_peak': 191.1})
+    cat_usage = kepco_result['usage_by_cat']
+    
+    # 2. 부하 구간별 지표 표시
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("🌙 경부하 (22시~08시)", f"{cat_usage.get('off_peak', 0):,.1f} kWh")
+    with col2:
+        st.metric("☀️ 중간부하 (기타 시간)", f"{cat_usage.get('mid_peak', 0):,.1f} kWh")
+    with col3:
+        st.metric("🔥 최대부하 (피크 시간)", f"{cat_usage.get('on_peak', 0):,.1f} kWh")
+        
+    st.divider()
+    
+    # 3. 부하 구분별 비중 파이 차트 시각화
+    import plotly.express as px
+    
+    pie_data = {
+        '부하구분': ['경부하', '중간부하', '최대부하'],
+        '사용량(kWh)': [
+            cat_usage.get('off_peak', 0),
+            cat_usage.get('mid_peak', 0),
+            cat_usage.get('on_peak', 0)
+        ]
+    }
+    
+    fig_pie = px.pie(
+        pie_data, 
+        names='부하구분', 
+        values='사용량(kWh)',
+        title='시간대별 전력 사용량 비중',
+        color='부하구분',
+        color_discrete_map={'경부하': '#2ecc71', '중간부하': '#f1c40f', '최대부하': '#e74c3c'}
+    )
+    st.plotly_chart(fig_pie, use_container_width=True)
         with tab3:
             st.subheader('📥 보고서 및 정제 데이터 다운로드')
             html_report = generate_html_report(peak, str(peak_info['peak_time']), total, cost_info, target_threshold)
