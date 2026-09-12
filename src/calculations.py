@@ -182,3 +182,37 @@ def calculate_kepco_cost(df, base_rate=8320, summer_rates=None):
         'total_cost': base_rate + total_usage_cost,
         'category_usage': category_usage
     }
+def calculate_kepco_cost(df, base_rate=8320, rates=None):
+    """
+    한전 산업용 3단계 시간대별(경부하, 중간부하, 최대부하) 요금 계산
+    """
+    if rates is None:
+        rates = {'off_peak': 65.2, 'mid_peak': 109.0, 'on_peak': 191.1}
+
+    df_calc = df.copy()
+    df_calc['hour'] = df_calc['datetime'].dt.hour
+    
+    # 시간대 분류 (경부하: 22-08시, 최대부하: 11시,13-16시, 중간부하: 기타)
+    def get_category(h):
+        if 22 <= h or h < 8:
+            return 'off_peak'
+        elif h in [11, 13, 14, 15, 16]:
+            return 'on_peak'
+        else:
+            return 'mid_peak'
+
+    df_calc['category'] = df_calc['hour'].apply(get_category)
+    usage_by_cat = df_calc.groupby('category')['power_usage'].sum().to_dict()
+
+    off_cost = usage_by_cat.get('off_peak', 0) * rates['off_peak']
+    mid_cost = usage_by_cat.get('mid_peak', 0) * rates['mid_peak']
+    on_cost = usage_by_cat.get('on_peak', 0) * rates['on_peak']
+
+    usage_cost = off_cost + mid_cost + on_cost
+
+    return {
+        'base_cost': base_rate,
+        'usage_cost': usage_cost,
+        'total_cost': base_rate + usage_cost,
+        'usage_by_cat': usage_by_cat
+    }
