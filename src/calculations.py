@@ -214,3 +214,30 @@ def generate_html_report(peak: float, peak_time: str, total: float, cost_info: D
     </body>
     </html>
     """
+def generate_energy_insights(peak_time: str, is_exceeded: bool) -> str:
+    """피크 발생 시각 및 초과 여부를 기반으로 절감 권장사항 생성"""
+    if not peak_time:
+        return "분석할 전력 사용 데이터가 충분하지 않습니다."
+
+    try:
+        hour = pd.to_datetime(peak_time).hour
+    except Exception:
+        return "피크 시각 형식이 올바르지 않습니다."
+
+    # 최대부하 시간대 (11시, 13~16시)
+    if hour in [11, 13, 14, 15, 16]:
+        time_msg = "🔥 현재 최대부하(피크) 시간대에 피크전력이 발생했습니다."
+        action_msg = "해당 시간대의 대형 설비 가동을 경부하(22시~08시) 또는 중간부하 시간대로 이전하면 기본요금 및 전력량 요금을 대폭 절감할 수 있습니다."
+    elif 22 <= hour or hour < 8:
+        time_msg = "🌙 경부하 시간대에 피크전력이 발생했습니다."
+        action_msg = "단가가 가장 저렴한 구간에 사용량이 집중되어 있어 요금 효율이 양호합니다."
+    else:
+        time_msg = "☀️ 중간부하 시간대에 피크전력이 발생했습니다."
+        action_msg = "최대부하 시간대로 전력 사용이 쏠리지 않도록 피크 제어장치를점검하세요."
+
+    if is_exceeded:
+        warning_msg = " ⚠️ 목표 피크를 초과하였으므로 계약전력 증설 또는 피크 컷(Peak Cut) 에너지 저장장치(ESS) 도입을 검토하세요."
+    else:
+        warning_msg = " ✅ 목표 피크 범위 내에서 안정적으로 관리되고 있습니다."
+
+    return f"{time_msg} {action_msg}{warning_msg}"
